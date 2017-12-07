@@ -3,18 +3,19 @@ require_relative 'vlc_client'
 
 class Client
 
-  def initialize(ngrok_url, filename, platform = :macOS)
-    @server_url     = ngrok_url
+  def initialize(ngrok_id, filename, platform = :macOS)
+    @server_url     = "http://#{ngrok_id}.ngrok.io"
     @filename       = filename
     @platform       = platform
 
-    # There can likely be a race condition here if ping_interval and check_interval are the same
     @ping_interval  = 3
     @check_interval = 1
     @vlc_client     = VLCClient.new
+    @lock           = false
 
     @current_status = @vlc_client.status
     start_vlc
+    keep_in_sync_with_server
   end
 
 
@@ -27,11 +28,11 @@ class Client
   
   def update_local_client(action)
     case action
-      when :PLAYING
+      when "playing"
         @vlc_client.resume
-      when :PAUSED
-        @vlc_client.stop
-      when :STOPPED
+      when "paused"
+        @vlc_client.pause
+      when "stopped"
         @vlc_client.stop
     end
 
@@ -39,35 +40,43 @@ class Client
   end
 
   
-  def check_server_status
-    Thread.new {
-      res = NET::HTTP.get(@server_url, 'Status')
+  def keep_in_sync_with_server
+    threads = []
+    
+    # check_server_status
+    threads << Thread.new {
+      loop do
+        unless @lock
+          res = Net::HTTP.get(URI(@server_url + "/Status"))
+          
+          if (server_status = res) != @current_status
+            update_local_client(server_status)
+          end
+        end
 
-      if (server_status = res.body) != @current_status
-        update_local_client(server_status)
+        sleep(@ping_interval)
       end
-
-      sleep(@ping_interval)
     }
-  end
-
-  
-  def check_local_status
+    
     # If local state changed, send updates to server
-    Thread.new {
-      if @current_status != @vlc_client.status
-        @current_status = @vlc_client.status
-        update_server_status
-      end
+    threads << Thread.new {
+      loop do
+        if @current_status != @vlc_client.status
+          @lock = true
+          @current_status = @vlc_client.status
+          update_server_status
+          @lock = false
+        end
 
-      sleep(@check_interval)
+        sleep(@check_interval)
+      end
     }
+
+    threads.each { |t| t.join }
   end
 
   def update_server_status
-    req = Net::HTTP::Post.new(@server_url, 'Status')
-    req.set_form_data('status' => @vlc_client.status)
-    res = http.start { |http| http.request(req) }
+    Net::HTTP::post_form(URI(@server_url + "/Status"), {"status" => @current_status})
   end
 
 end

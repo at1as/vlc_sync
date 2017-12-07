@@ -12,7 +12,7 @@ One VLC session will act as the server, whose state is updated by and fetched by
 ### Server
 
 ```
-FILENAME="/Users/jwillems/Media/its.a.wonderful.life.(1946).mkv" ruby server.rb 
+FILENAME="/Users/jwillems/Media/its.a.wonderful.life.(1946).mkv" ruby vlc_sync/server.rb 
 ngrok http 4567
 ```
 
@@ -20,7 +20,7 @@ ngrok http 4567
 ### Client
 
 ```
-NGROK="ab99dx8f" FILENAME="/Users/jwillems/Media/its.a.wonderful.life.(1946).mkv" ruby server.rb 
+NGROK="ab99dx8f" FILENAME="/Users/jwillems/Media/its.a.wonderful.life.(1946).mkv" ruby start_client.rb 
 ```
 
 ## Details
