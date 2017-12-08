@@ -1,4 +1,6 @@
 require 'json'
+require 'net/http'
+require 'uri'
 
 class VLCClient
 
@@ -19,30 +21,43 @@ class VLCClient
     Thread.new do
       `/Applications/VLC.app/Contents/MacOS/VLC --extraintf http --http-host "#{@host}" --http-port #{@port} --http-password #{@password}`
     end if @platform == :macOS
-    
-    sleep(2)
+
+    # VLC http server won't accept requests until it has booted
+    # Even after it has booted and returns 200s, it will drop requests sent to it for about the next second or so
+    # TODO: timeout here to avoid infinte loop
+    loop do
+      break if alive?
+      sleep(1)
+    end
+  end
+  
+
+  def alive?
+    !!send_status_request
+  rescue Errno::ECONNREFUSED
+    false
   end
 
   def status
-    JSON.parse(`curl "http://#{@host}:#{@port}/requests/status.json" -u ":#{@password}"`)['state']
+    JSON.parse(send_status_request.body)['state']
   end
 
+  
   def play(filename)
-    `curl "http://#{@host}:#{@port}/requests/status.xml?command=in_play&input=#{filename}" -u ":#{@password}"`
-    
+    send_status_request("command=in_play&input=#{filename}") 
     @filename = filename
   end
 
   def pause
-    `curl "http://#{@host}:#{@port}/requests/status.json?command=pl_pause" -u ":#{@password}"`
+    send_status_request("command=pl_pause")
   end
 
   def resume
-    `curl "http://#{@host}:#{@port}/requests/status.json?command=pl_play" -u ":#{@password}"`
+    send_status_request("command=pl_play")
   end
 
   def stop 
-    `curl "http://#{@host}:#{@port}/requests/status.json?command=pl_stop" -u ":#{@password}"`
+    send_status_request("command=pl_stop")
   end
 
   
@@ -58,5 +73,17 @@ class VLCClient
     status() == "stopped"
   end
 
+  
+  private
+    def send_status_request(params_string = "")
+      vlc_server = "http://#{@host}:#{@port}"
+      path       = "/requests/status.json"
+
+      http    = Net::HTTP.new(@host, @port)
+      request = Net::HTTP::Get.new("#{path}?#{params_string}".chomp("?"))
+      request.basic_auth("", @password)
+
+      http.request(request)
+    end
 end
 
