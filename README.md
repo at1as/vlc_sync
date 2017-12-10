@@ -3,6 +3,10 @@
 Quick script to keep two VLC sessions in sync using ngrok for communication
 
 
+### Demo
+
+![Demo](https://github.com/at1as/at1as.github.io/raw/master/github_repo_assets/vlc_sync-1_320-240.gif)
+
 # Usage
 
 One VLC session will act as the `server`, whose state is updated by the `client` to keep the two video feeds in sync. The server is stateless: it just reports its current state, while the client is stateful, it tracks changes and matches itself to server, or updates the server state to match local changes
@@ -46,3 +50,7 @@ When either user now pauses or resumes the video, the other player will perform 
 
 * Built and tested on MacOS 10.11
 * Built on Ruby 2.4.0
+
+### TODO
+
+* Switch from server send events to websockets for realtime two-way communication. The server will have to maintain state in order to know when to send events, however it appears to be a worthwhile trade off as keeping players in sync will be more reliable
