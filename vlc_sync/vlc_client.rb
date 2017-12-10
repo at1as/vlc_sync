@@ -22,11 +22,14 @@ class VLCClient
       `/Applications/VLC.app/Contents/MacOS/VLC --extraintf http --http-host "#{@host}" --http-port #{@port} --http-password #{@password}`
     end if @platform == :macOS
 
-    # VLC http server won't accept requests until it has booted
+    # VLC built in http server won't accept requests until it has started up
     # Even after it has booted and returns 200s, it will drop requests sent to it for about the next second or so
-    # TODO: timeout here to avoid infinte loop
+    start_time = Time.now
+    timeout    = 5
+
     loop do
       break if alive?
+      raise "VLCFailedToLoad" if (Time.now - start_time) > timeout
       sleep(1)
     end
   end
