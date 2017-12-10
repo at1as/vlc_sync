@@ -1,4 +1,3 @@
-require 'byebug'
 require 'eventmachine'
 require 'faye/websocket'
 require 'net/http'
@@ -90,8 +89,8 @@ class Client
 
         EventMachine::PeriodicTimer.new(0.01) do
           if (new_status = @vlc_client.status) != @current_status
-            puts "Sending update to remote client: #{new_status}"
             @lock.acquire
+            puts "Sending update to remote client: #{new_status}"
             ws.send(new_status)
             @current_status = new_status
             @lock.release
