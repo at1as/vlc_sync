@@ -1,5 +1,5 @@
-require 'byebug'
-require 'em-eventsource'
+require 'eventmachine'
+require 'faye/websocket'
 require 'net/http'
 require_relative 'lock'
 require_relative 'vlc_client'
@@ -9,6 +9,7 @@ class Client
 
   def initialize(ngrok_id, filename, platform = :macOS)
     @server_url     = "http://#{ngrok_id}.ngrok.io"
+    @socket_url     = "ws://#{ngrok_id}.ngrok.io"
     @filename       = filename
     @platform       = platform
 
@@ -60,70 +61,49 @@ class Client
   end
 
   
-  def keep_in_sync_with_server
-    sync_local_with_server_changes
-    sync_server_with_local_changes
-  end
-
-  def sync_local_with_server_changes
+	def keep_in_sync_with_server
     Thread.new {
-      EM.run do  
-        source = EventMachine::EventSource.new(@server_url + "/StatusStream")
+      EM.run do
+        ws = Faye::WebSocket::Client.new(@socket_url)
 
-        source.message do |msg|
-          if msg != @vlc_client.status && !@lock.locked?
+        ws.on :open do
+          puts "Connected!"
+          ws.send("Now Connected")
+        end
 
-            acquired = @lock.acquire
-            puts "Updating local status to #{msg} to match remote player"
-            update_local_client(msg) if acquired
+        ws.on :message do |msg|
+          puts "Received message #{msg.data}"
+          next unless %w(paused playing stopped).include? msg.data
+          
+          if msg != @vlc_client.status && @lock.unlocked?
+            @lock.acquire
+            update_local_client(msg.data)
             @lock.release
           end
         end
 
-        source.start
-      end
-    }
-  end
-
-  def sync_server_with_local_changes
-    # If local state changed, send updates to server
-    threads = []
-    
-    threads << Thread.new {
-      loop do
-        if ((from = @current_status) != (to = @vlc_client.status)) && !@lock.locked?
-          puts "Status changed from #{from} to #{to}"
-
-          @lock.acquire
-          @current_status = @vlc_client.status
-          update_server_status #unless @current_status 
-
-          wait_for_remote_vlc(Net::HTTP, :get, URI(@server_url + "/Status"), @vlc_client.status, 5)
-          @lock.release
+        ws.on :close do
+          ws = nil
+          Thread.exit
         end
 
+        EventMachine::PeriodicTimer.new(0.01) do
+          if (new_status = @vlc_client.status) != @current_status
+            @lock.acquire
+            puts "Sending update to remote client: #{new_status}"
+            ws.send(new_status)
+            @current_status = new_status
+            @lock.release
+          end
+        end
       end
-    }
-
-    threads.each { |t| t.join }
+    }.join
   end
 
   
   def update_server_status
-    puts "Updating Remote Player Status to : #{@current_status}"
+    puts "Updating remote player status to : #{@current_status}"
     Net::HTTP::post_form(URI(@server_url + "/Status"), {"status" => @current_status})
-  end
-
-
-  def wait_for_remote_vlc(http_client, method, args, result, timeout = 5)
-    start_time = Time.now
-
-    loop do
-      return if (res = http_client.send(method, args)) == result || (Time.now - start_time) > timeout
-      sleep(1)
-    end
-
-    raise "TimeoutException"
   end
 
 
@@ -132,7 +112,7 @@ class Client
 
     loop do
       return if @vlc_client.status == status || (Time.now - start_time) > timeout
-      sleep(1)
+      sleep(0.5)
     end
 
     raise "TimeoutException"
