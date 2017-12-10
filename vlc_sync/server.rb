@@ -1,5 +1,7 @@
 require 'byebug'
+require 'eventmachine'
 require 'sinatra'
+require 'sinatra/streaming'
 require_relative 'vlc_client'
 
 configure do
@@ -11,6 +13,23 @@ end
 
 get '/Status' do
   "#{$vlc_client.status}"
+end
+
+
+get '/StatusStream', provides: 'text/event-stream' do
+  stream :keep_open do |out|
+    begin
+      EM.run { 
+        EventMachine::PeriodicTimer.new(0.25) do
+          out << "data: #{$vlc_client.status}\n\n"
+        end
+      }
+    rescue Errno::EIO
+    ensure
+      keep_alive.cancel rescue nil
+      out.close unless out.closed?
+    end
+  end
 end
 
 
