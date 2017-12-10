@@ -1,50 +1,64 @@
-require 'byebug'
-require 'eventmachine'
-require 'sinatra'
-require 'sinatra/streaming'
+require 'em-websocket'
+
+require_relative 'lock'
 require_relative 'vlc_client'
 
-configure do
-  $vlc_client = VLCClient.new
-  $vlc_client.play(ENV['FILENAME'])
-  $vlc_client.pause
-end
 
+EventMachine.run do
+  @lock = Lock.new
+  
+  @vlc_client = VLCClient.new
+  @vlc_client.play(ENV['FILENAME'])
+  @vlc_client.pause
 
-get '/Status' do
-  "#{$vlc_client.status}"
-end
+  # Track local VLC Player state changes in order to push them to clients
+  @vlc_client_status = @vlc_client.status
 
+  @clients = []
 
-get '/StatusStream', provides: 'text/event-stream' do
-  stream :keep_open do |out|
-    begin
-      EM.run { 
-        EventMachine::PeriodicTimer.new(0.25) do
-          out << "data: #{$vlc_client.status}\n\n"
-        end
-      }
-    rescue Errno::EIO
-    ensure
-      keep_alive.cancel rescue nil
-      out.close unless out.closed?
+  EM::WebSocket.start(:host => '0.0.0.0', :port => '4567') do |ws|
+    
+    ws.onopen do |handshake|
+      puts "Connected to client..."
+      @clients << ws
+      ws.send "Now connected to #{handshake.path}"
     end
+
+    ws.onmessage do |msg|
+      puts "received message #{msg}"
+      case msg
+        when "playing"
+          @lock.acquire
+          @vlc_client.resume
+          @vlc_client_status = @vlc_client.status
+          @lock.release
+        when "paused"
+          @lock.acquire
+          @vlc_client.pause
+          @vlc_client_status = @vlc_client.status
+          @lock.release
+        when "stopped"
+          @lock.acquire
+          @vlc_client.stop
+          @vlc_client_status = @vlc_client.status
+          @lock.release
+      end
+    end
+  
+    ws.onclose do
+      ws.send "Closed."
+      puts "Connection closed"
+      @clients.delete ws
+    end
+
+    EventMachine::PeriodicTimer.new(0.01) do
+      if ((old_status = @vlc_client_status) != (new_status = @vlc_client.status)) && @lock.unlocked?
+        puts "Updating remote client to status: #{new_status}"
+        ws.send "#{new_status}"
+        @vlc_client_status = new_status
+      end
+    end
+
   end
-end
-
-
-post '/Status' do
-  updated_status = params['status']
-
-  case updated_status
-    when "playing"
-      $vlc_client.resume
-    when "paused"
-      $vlc_client.pause
-    when "stopped"
-      $vlc_client.stop
-  end
-
-  201
 end
 
